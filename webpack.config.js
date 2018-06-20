@@ -1,7 +1,10 @@
 const path = require('path')
 
 module.exports = {
-    entry: './src/index.js',
+    entry: {
+        main: './src/index.js',
+        variable_inspector: './src/variable_inspector.js'
+    },
     target: 'electron',
     module: {
         loaders: [
@@ -9,7 +12,7 @@ module.exports = {
         ]
     },
     output: {
-        filename: 'bundle.js',
+        filename: '[name].js',
         path: path.resolve(__dirname, 'dist')
     },
 }

@@ -7,36 +7,43 @@ import sys
 import threading
 import inspect
 import time
+import socket
 
-last_call = None
+state = {
+    'speed': 'slow'
+}
 
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.connect(("localhost", 4387))
+s.setblocking(False)
 
 def debounce(wait):
     def decorator(fn):
+        class context:
+            last_call = None
         def debounced(*args, **kwargs):
-            global last_call
-
             def call_it():
-                global last_call
-                args, kwargs = last_call
+                args, kwargs = context.last_call
                 fn(*args, **kwargs)
-                last_call = None
-            if last_call is None:
+                context.last_call = None
+            if context.last_call is None:
                 debounced.t = threading.Timer(wait, call_it)
                 debounced.t.start()
-            last_call = (args, kwargs)
+            context.last_call = (args, kwargs)
         return debounced
     return decorator
 
 
 def log(msg):
-    print('[LIVEPYTHON_TRACER] %s' % msg)
-    sys.stdout.flush()
+    try:
+        s.send(bytes(msg+'\n', 'utf8'))
+    except:
+        s.send(msg+'\n')
 
 
-@debounce(0.01)
-def log_frame(frame, should_update_source):
-    log(json.dumps(generate_call_event(frame, should_update_source)))
+@debounce(0.1)
+def log_frame(frame):
+    log(json.dumps(generate_call_event(frame)))
 
 
 starting_filename = os.path.abspath(sys.argv[1])
@@ -51,6 +58,39 @@ current_locals = {}
 failed = False
 
 
+def should_ignore_variable(name):
+    return name.startswith('__') and name.endswith('__')
+
+
+def truncate_list(l):
+    if len(l) > 3:
+        ret = ', '.join(map(process_variable, l[:2]))
+        ret += ", ..., "
+        ret += process_variable(l[-1])
+        return ret
+    else:
+        return ', '.join(map(process_variable, l))
+
+
+def format_function(f):
+    args = inspect.getargspec(f).args
+    return "function(%s)" % truncate_list(args)
+
+
+def format_list(l):
+    return "[%s]" % truncate_list(l)
+
+
+def process_variable(var):
+    type_name = type(var).__name__
+    if type_name == 'list':
+        return format_list(var)
+    elif type_name == 'module':
+        return "<module '%s'>" % var.__name__
+    else:
+        return str(var)
+
+
 def get_module_name(full_path):
     global starting_filename
     return os.path.relpath(
@@ -59,9 +99,19 @@ def get_module_name(full_path):
     )
 
 
-def generate_call_event(frame, should_update_source):
+def generate_call_event(frame):
+    frame_locals = {k:
+       {'value': process_variable(v), 'type': type(v).__name__}
+       for k, v in frame.f_locals.items() if not should_ignore_variable(k)
+    }
+    frame_globals = {k:
+       {'value': process_variable(v), 'type': type(v).__name__}
+       for k, v in frame.f_globals.items() if not should_ignore_variable(k)
+    }
     obj = {
         'type': 'call',
+        'frame_locals': frame_locals,
+        'frame_globals': frame_globals,
         'filename': get_module_name(frame.f_code.co_filename),
         'lineno': frame.f_lineno,
         'source': ''.join(linecache.getlines(frame.f_code.co_filename))
@@ -80,7 +130,23 @@ def generate_exception_event(e):
     }
 
 
+def process_msg(msg):
+    global state
+    if type(msg) == bytes:
+        msg = msg.decode('utf8')
+    msg = json.loads(msg)
+    if msg['type'] == 'change_speed':
+        print('changed speed')
+        state['speed'] = msg['speed']
+
+
 def local_trace(frame, why, arg):
+    try:
+        received_msg = s.recv(1024)
+        process_msg(received_msg)
+    except:
+        pass
+
     global current_line
     global current_filename
 
@@ -92,7 +158,6 @@ def local_trace(frame, why, arg):
         exc_msg = arg[1]
         return
 
-    should_update_source = current_filename != frame.f_code.co_filename
     current_filename = frame.f_code.co_filename
     current_line = frame.f_lineno
 
@@ -108,7 +173,11 @@ def local_trace(frame, why, arg):
     if 'lib/python' in current_filename:
         return
 
-    log_frame(frame, should_update_source)
+    log_frame(frame)
+
+    if state['speed'] == 'slow':
+        time.sleep(1)
+
     return local_trace
 
 
@@ -116,8 +185,9 @@ def global_trace(frame, why, arg):
     return local_trace
 
 
-with open(starting_filename) as fp:
+with open(starting_filename, 'rb') as fp:
     code = compile(fp.read(), starting_filename, 'exec')
+
 
 namespace = {
     '__file__': starting_filename,
@@ -140,6 +210,6 @@ try:
 except Exception as err:
     failed = True
     log(json.dumps(generate_exception_event(err)))
-
-sys.settrace(None)
-threading.settrace(None)
+finally:
+    sys.settrace(None)
+    threading.settrace(None)
