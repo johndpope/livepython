@@ -36,6 +36,27 @@ body {
 
 }
 
+.array-type {
+    background: #F2545B;
+
+}
+.int-type {
+    background: #A93F55;
+
+}
+
+.string-type {
+    background: #F3F7F0;
+
+}
+.class-type {
+    background: #8C5E58;
+
+}
+
+
+
+
 .selected-line {
     background: #278865;
 
