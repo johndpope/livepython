@@ -4,28 +4,33 @@ const fs = require("fs");
 var electronPath = require("electron");
 
 const net = require("net");
+const byline = require("byline");
+const { spawn } = require("child_process");
 
 var buffer = [];
 var electronWindowOpened = false;
 var socket;
 
+console.log("Starting server...");
+
 net.createServer((s) => {
+  console.log("Client connected");
   socket = s;
 
   const pythonLineStream = byline.createStream(socket);
   pythonLineStream.on("data", line => {
     line = line.toString();
+    // console.log("Received line:", line);
     if (!line.length) return;
     if (electronWindowOpened) {
+      console.log("Sending line to Electron process");
       electronProcess.send(line);
     } else {
+      console.log("Buffering line");
       buffer.push(line);
     }
   });
 }).listen(4387)
-
-const { spawn } = require("child_process");
-const byline = require("byline")
 
 var args = process.argv.slice(2)
 
@@ -35,44 +40,55 @@ if (!args.length) {
 }
 
 args.unshift(__dirname + "/../tracer.py")
+console.log("Starting Python process with args:", args);
 
 const electronProcess = spawn(electronPath, [__dirname + "/../"], {
   stdio: ["pipe", "pipe", "pipe", "ipc"]
-})
+});
 
 const pythonProcess = spawn("python", args);
 
 pythonProcess.stdout.on("data", data => {
+  console.log("Python stdout:", data.toString());
   process.stdout.write(data.toString());
 });
 
 pythonProcess.stderr.on("data", data => {
-  process.stdout.write(data.toString())
-})
+  console.log("Python stderr:", data.toString());
+  process.stdout.write(data.toString());
+});
 
 pythonProcess.on("exit", (code) => {
+  console.log("Python process exited with code:", code);
   electronProcess.kill('SIGINT')
   process.exit();
-})
+});
 
 electronProcess.on("message", msg => {
+  console.log("Message from Electron:", msg);
   if (msg.type === 'connected') {
+    console.log("Electron window opened");
     electronWindowOpened = true;
     buffer.forEach(msg => {
+      console.log("Sending buffered message to Electron process");
       electronProcess.send(msg);
     });
   } else if (msg.type === "toggle_running_state") {
     if (msg.value) {
+      console.log("Pausing Python process");
       pythonProcess.kill("SIGSTOP")
     } else {
+      console.log("Resuming Python process");
       pythonProcess.kill("SIGCONT");
     }
   } else {
+    console.log("Sending message to client");
     socket.write(JSON.stringify(msg))
   }
-})
+});
 
 function killSubprocesses (e) {
+  console.log("Killing subprocesses");
   electronProcess.kill("SIGINT");
   pythonProcess.kill("SIGINT");
   process.exit();

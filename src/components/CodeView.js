@@ -2,10 +2,10 @@ import React, {Component} from 'react'
 import jq from 'jquery'
 
 import SyntaxHighlighter from 'react-syntax-highlighter'
-import { tomorrowNight } from 'react-syntax-highlighter/dist/styles'
+import { atomDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
-tomorrowNight.hljs.background = 'none'
-tomorrowNight.hljs.padding = 0
+atomDark.hljs.background = 'none'
+atomDark.hljs.padding = 0
 
 class CodeView extends Component {
   constructor() {
